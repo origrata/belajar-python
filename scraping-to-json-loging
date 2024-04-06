@@ -1,0 +1,118 @@
+import requests
+import warnings
+from bs4 import BeautifulSoup
+import json
+import datetime
+
+# Nonaktifkan peringatan InsecureRequestWarning
+warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+
+# Fungsi untuk menambahkan data ke file JSON
+def add_data_to_json(file_name, new_data):
+    try:
+        with open(file_name, 'r', encoding='utf-8') as json_file:
+            data = json.load(json_file)
+    except FileNotFoundError:
+        data = []
+
+    # Mengecek apakah NPSN sudah ada dalam data
+    npsn_exists = False
+    for item in data:
+        if item.get('NPSN') == new_data.get('NPSN'):
+            npsn_exists = True
+            break
+
+    if not npsn_exists:
+        data.append(new_data)
+
+        with open(file_name, 'w', encoding='utf-8') as json_file:
+            json.dump(data, json_file, ensure_ascii=False, indent=4)
+            print(f"Data untuk NPSN {new_data['NPSN']} berhasil ditambahkan ke {file_name}")
+    else:
+        print(f"Data untuk NPSN {new_data['NPSN']} sudah ada dalam {file_name}, tidak ditambahkan.")
+
+# Baca nilai NPSN dari file JSON
+with open('dikdas.json') as json_file:
+    data = json.load(json_file)
+
+total_data_count = len(data)
+
+# Inisialisasi variabel untuk nama file log
+log_file_name = 'scraping_log_' + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + '.txt'
+
+# Fungsi untuk menulis log
+def write_log(message):
+    with open(log_file_name, 'a') as log_file:
+        log_file.write(message + '\n')
+
+# Looping untuk setiap nilai NPSN dalam daftar
+for index, npsn in enumerate(data, start=1):
+    # Buat URL berdasarkan nilai NPSN yang dibaca
+    url = f"https://referensi.data.kemdikbud.go.id/pendidikan/npsn/{npsn['npsn']}"
+
+    try:
+        # Mengambil konten HTML dari URL dengan menonaktifkan verifikasi sertifikat SSL dan menetapkan timeout 20 detik
+        response = requests.get(url, verify=False, timeout=20)
+
+        # Memeriksa apakah pengambilan data berhasil
+        if response.status_code == 200:
+            html = response.text
+
+            # Membuat objek BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+
+            # Inisialisasi dictionary untuk menyimpan data sekolah
+            school_data = {"NPSN": npsn["npsn"]}
+            print (school_data)
+            # Mencari semua elemen <tr>
+            tr_tags = soup.find_all("tr")
+
+            # Looping melalui elemen <tr>
+            for tr in tr_tags:
+                # Find all <td> elements in each row
+                td_tags = tr.find_all("td")
+                if len(td_tags) >= 4:  # Make sure each row has at least 4 columns
+                    # Get the value from the fourth column (index 3)
+                    key = td_tags[2].get_text().strip() if td_tags[2].get_text().strip() else "Akses Internet 2"
+                    value = td_tags[3].get_text().strip()
+                    school_data[key] = value
+
+            # Find Lintang and Bujur values
+            div = soup.find("div", class_="col-lg-4 col-md-4")
+            if div:
+                div_text = div.get_text()
+                lines = div_text.splitlines()
+                for line in lines:
+                    key_value = line.split(":")
+                    if len(key_value) == 2:
+                        key = key_value[0].strip()
+                        value = key_value[1].strip()
+                        school_data[key] = value
+
+            # Find the <a> element with class "link1" and get the href attribute
+            link1 = soup.find('a', class_='link1')
+            if link1:
+                href = link1.get('href')
+                school_data["Sekolah_Id"] = href  # Make sure the key is "Sekolah_Id"
+
+            # Menambahkan data sekolah ke dalam file JSON secara real-time
+            add_data_to_json('scrap-data-npsn-dikdas-baru.json', school_data)
+
+            # Menulis log progress
+            progress_percentage = (index / total_data_count) * 100
+            log_message = f"Selesai scraping data untuk NPSN {npsn['npsn']}. Progres: {progress_percentage:.2f}% dari Total Data {total_data_count}"
+            print(log_message)
+            write_log(log_message)
+        else:
+            error_message = f"Gagal mengambil data untuk NPSN {npsn['npsn']}. Kode status: {response.status_code}"
+            print(error_message)
+            write_log(error_message)
+    except requests.exceptions.RequestException as e:
+        timeout_error_message = f"Timeout saat mengakses URL {url}. Kesalahan: {e}"
+        print(timeout_error_message)
+        write_log(timeout_error_message)
+
+# Menampilkan jumlah total data yang berhasil diambil
+total_data_message = f"Proses scraping selesai."
+print(total_data_message)
+write_log(total_data_message)
